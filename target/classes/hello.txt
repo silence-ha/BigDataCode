@@ -1,5 +1,3 @@
-java flink spark
-java spark
-es java flink es
-flume kafka
-kafka
+java flink
+java flink
+spark kylin

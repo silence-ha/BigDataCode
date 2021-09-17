@@ -1,5 +1,6 @@
 package com.silence.flink;
 
+import net.minidev.json.JSONUtil;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -9,18 +10,26 @@ import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.util.Collector;
+
+import java.net.URL;
 
 
 public class StreamingWordCount {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env=StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(2);
 
-        ParameterTool parameterTool = ParameterTool.fromArgs(args);
-        String host=parameterTool.get("host");
-        int port=parameterTool.getInt("port");
+//        ParameterTool parameterTool = ParameterTool.fromArgs(args);
+//        String host=parameterTool.get("host");
+//        int port=parameterTool.getInt("port");
+//
+//        DataStreamSource<String> ds = env.socketTextStream(host, port);
+        URL resource = Thread.currentThread().getContextClassLoader().getResource("hello.txt");
 
-        DataStreamSource<String> ds = env.socketTextStream(host, port);
+        DataStreamSource<String> ds = env.readTextFile(resource.getPath());
 
         SingleOutputStreamOperator<String> word = ds.flatMap(new FlatMapFunction<String, String>() {
             @Override
@@ -38,15 +47,25 @@ public class StreamingWordCount {
             }
         });
 
-        KeyedStream<Tuple2<String, Integer>, Object> kedStream = wc.keyBy(new KeySelector<Tuple2<String, Integer>, Object>() {
+        KeyedStream<Tuple2<String, Integer>, String> kedStream = wc.keyBy(new KeySelector<Tuple2<String, Integer>, String>() {
             @Override
-            public Object getKey(Tuple2<String, Integer> stringIntegerTuple2) throws Exception {
+            public String getKey(Tuple2<String, Integer> stringIntegerTuple2) throws Exception {
                 return stringIntegerTuple2.f0;
             }
         });
-        SingleOutputStreamOperator<Tuple2<String, Integer>> sum = kedStream.sum(1);
+       // SingleOutputStreamOperator<Tuple2<String, Integer>> sum = kedStream.sum(1);
+        SingleOutputStreamOperator<String> ss = kedStream.process(new KeyedProcessFunction<String, Tuple2<String, Integer>, String>() {
+            int c = 0;
 
-        sum.print();
+            @Override
+            public void processElement(Tuple2<String, Integer> stringIntegerTuple2, Context context, Collector<String> collector) throws Exception {
+                c = c + 1;
+                collector.collect(stringIntegerTuple2.f0+"====="+c);
+            }
+        });
+
+
+        ss.print();
 
         env.execute("wc");
     }
