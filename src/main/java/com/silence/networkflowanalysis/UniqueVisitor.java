@@ -7,10 +7,12 @@ import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.util.Collector;
 
@@ -44,7 +46,14 @@ public class UniqueVisitor {
                 }));
 
         SingleOutputStreamOperator<String> processDs = waterDs.filter(f -> f.getBehavior().equals("pv"))
-                .process(new ProcessFunction<UserBehavior, String>() {
+                .map(new MapFunction<UserBehavior, Tuple2<String, UserBehavior>>() {
+                    @Override
+                    public Tuple2<String, UserBehavior> map(UserBehavior userBehavior) throws Exception {
+                        return Tuple2.of("uv", userBehavior);
+                    }
+                })
+                .keyBy(f -> f.f0)
+                .process(new KeyedProcessFunction<String, Tuple2<String, UserBehavior>, String>() {
                     ListState<Long> userIdList;
 
                     @Override
@@ -53,13 +62,12 @@ public class UniqueVisitor {
                     }
 
                     @Override
-                    public void processElement(UserBehavior userBehavior, Context context, Collector<String> collector) throws Exception {
+                    public void processElement(Tuple2<String, UserBehavior> value, Context context, Collector<String> collector) throws Exception {
                         boolean b = userIdList.get().iterator().hasNext();
-                        userIdList.add(userBehavior.getUserId());
+                        userIdList.add(value.f1.getUserId());
                         if (!b) {
-                            context.timerService().registerEventTimeTimer((userBehavior.getTimestamp() * 1000l / (24 * 60 * 60 * 1000) + 1) * 24 * 60 * 60 * 1000 - 8 * 60 * 60 * 1000);
+                            context.timerService().registerEventTimeTimer((value.f1.getTimestamp() * 1000l / (24 * 60 * 60 * 1000) + 1) * 24 * 60 * 60 * 1000 - 8 * 60 * 60 * 1000);
                         }
-
                     }
 
                     @Override
@@ -74,6 +82,7 @@ public class UniqueVisitor {
                         userIdList.clear();
                     }
                 });
+
         processDs.print();
         env.execute("uv");
 
