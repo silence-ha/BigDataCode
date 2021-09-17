@@ -30,8 +30,10 @@ import java.util.Iterator;
 public class HotPages {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
         String path=Thread.currentThread().getContextClassLoader().getResource("apache.log").getPath();
-        System.out.println("----"+path);
+
         DataStreamSource<String> ds = env.readTextFile(path);
 
         SingleOutputStreamOperator<ApacheLogEvent> mapDs = ds.map(new MapFunction<String, ApacheLogEvent>() {
@@ -48,7 +50,7 @@ public class HotPages {
 
                     @Override
                     public long extractTimestamp(ApacheLogEvent apacheLogEvent, long l) {
-                        return apacheLogEvent.getTimestamp() * 1000l;
+                        return apacheLogEvent.getTimestamp();
                     }
                 }));
         KeyedStream<ApacheLogEvent, String> keyedDS = tsDs
@@ -98,48 +100,61 @@ public class HotPages {
                     }
                 });
 
-        aggDs.keyBy(new KeySelector<PageViewCount, Long>() {
+        SingleOutputStreamOperator<String> pageDs = aggDs.keyBy(new KeySelector<PageViewCount, Long>() {
             @Override
             public Long getKey(PageViewCount pageViewCount) throws Exception {
                 return pageViewCount.getWindowEnd();
             }
         })
-             .process(new KeyedProcessFunction<Long, PageViewCount, String>(){
-            ListState<PageViewCount> pageList;
-            @Override
-            public void open(Configuration parameters) throws Exception {
-                pageList= getRuntimeContext().getListState(new ListStateDescriptor<PageViewCount>("page", PageViewCount.class));
-            }
+                .process(new KeyedProcessFunction<Long, PageViewCount, String>() {
+                    ListState<PageViewCount> pageList;
 
-            @Override
-            public void processElement(PageViewCount pageViewCount, Context context, Collector<String> collector) throws Exception {
-                pageList.add(pageViewCount);
-                context.timerService().registerEventTimeTimer(pageViewCount.getWindowEnd()+1);
-            }
-
-            @Override
-            public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
-                Iterator<PageViewCount> iterator = pageList.get().iterator();
-                ArrayList<PageViewCount> pageViewCounts = Lists.newArrayList(iterator);
-
-                pageViewCounts.sort(new Comparator<PageViewCount>() {
                     @Override
-                    public int compare(PageViewCount o1, PageViewCount o2) {
-                        if(o1.getCount()>o2.getCount()){
-                            return 1;
-                        }else {
-                            return 0;
+                    public void open(Configuration parameters) throws Exception {
+                        pageList = getRuntimeContext().getListState(new ListStateDescriptor<PageViewCount>("page", PageViewCount.class));
+                    }
+
+                    @Override
+                    public void processElement(PageViewCount pageViewCount, Context context, Collector<String> collector) throws Exception {
+
+                        pageList.add(pageViewCount);
+                        context.timerService().registerEventTimeTimer(pageViewCount.getWindowEnd() + 1);
+                    }
+
+                    @Override
+                    public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+
+                        Iterator<PageViewCount> iterator = pageList.get().iterator();
+                        ArrayList<PageViewCount> pageViewCounts = Lists.newArrayList(iterator);
+
+
+                        pageViewCounts.sort(new Comparator<PageViewCount>() {
+                            @Override
+                            public int compare(PageViewCount o1, PageViewCount o2) {
+                                if (o1.getCount() > o2.getCount()) {
+                                    return 1;
+                                } else {
+                                    return 0;
+                                }
+                            }
+                        });
+                        StringBuilder sb = new StringBuilder();
+                        if (pageViewCounts.size() > 3) {
+                            for (int i = 0; i < 3; i++) {
+                                sb.append(pageViewCounts.get(i).toString() + "\n");
+                            }
+                        } else {
+                            for (int i = 0; i < pageViewCounts.size(); i++) {
+                                sb.append(pageViewCounts.get(i).toString() + "\n");
+                            }
                         }
+
+                        System.out.println(sb.toString());
+                        out.collect(sb.toString());
                     }
                 });
-                StringBuilder sb=new StringBuilder();
-                for(int i=0;i<3;i++){
-                    sb.append(pageViewCounts.get(i).toString()+"\n");
-                }
-                sb.append("======================");
-                out.collect(sb.toString());
-            }
-        });
-     env.execute("hot_page");
+
+        pageDs.print();
+        env.execute("hot_page");
     }
 }
